@@ -20,12 +20,18 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def health():
         return {"status": "ok"}
+    # Duplicate health under subpath to work with reverse proxy that preserves subpath
+    @app.get("/spread-finder/api/health")
+    def health_prefixed():
+        return {"status": "ok"}
 
+    # Register routers both at root and under "/spread-finder" to support subpath deployment
     app.include_router(meta_router, prefix="/api")
     app.include_router(spread_router, prefix="/api")
+    app.include_router(meta_router, prefix="/spread-finder/api")
+    app.include_router(spread_router, prefix="/spread-finder/api")
 
     return app
 
 
 app = create_app()
-

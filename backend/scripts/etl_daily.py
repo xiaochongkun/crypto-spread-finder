@@ -81,25 +81,37 @@ async def run_once(date_str: str, bases: List[str]) -> None:
         df = pd.DataFrame(rows)
         # Normalize fields presence
         # Expected fields: instrument_name, bid_price, ask_price, mark_price, mark_iv, open_interest, underlying_price, expiration_timestamp, creation_timestamp
-        df = df.rename(columns={
-            "instrument_name": "instrument",
-            "bid_price": "bid",
-            "ask_price": "ask",
-            "open_interest": "oi",
-            "underlying_price": "underlying",
-            "expiration_timestamp": "expiry_ts",
-        })
-        # Backfill/derive fields
-        strikes = []
-        types = []
-        bases_parsed = []
+        df = df.rename(
+            columns={
+                "instrument_name": "instrument",
+                "bid_price": "bid",
+                "ask_price": "ask",
+                "open_interest": "oi",
+                "underlying_price": "underlying",
+            }
+        )
+        # Enrich with instrument metadata: expiry_ts, strike, option_type
+        strikes: List[float] = []
+        types: List[str] = []
+        expiries: List[int] = []
+        bases_parsed: List[str] = []
         for name in df["instrument"].tolist():
-            b, _, k, t = parse_instrument(name)
-            strikes.append(k)
-            types.append("C" if t.startswith("C") else "P")
-            bases_parsed.append(b)
+            meta = ins_map.get(name)
+            if meta:
+                strikes.append(float(meta.get("strike")))
+                types.append("C" if str(meta.get("option_type", "")).lower().startswith("c") else "P")
+                expiries.append(int(meta.get("expiration_timestamp")))
+                bases_parsed.append(str(meta.get("base_currency", base)))
+            else:
+                # Fallback to parsing
+                b, _, k, t = parse_instrument(name)
+                strikes.append(float(k))
+                types.append("C" if t.startswith("C") else "P")
+                expiries.append(0)
+                bases_parsed.append(b)
         df["strike"] = strikes
         df["option_type"] = types
+        df["expiry_ts"] = expiries
         df["base"] = bases_parsed
         df["date"] = date_str
         df["asof_ts"] = asof_ts
@@ -138,4 +150,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

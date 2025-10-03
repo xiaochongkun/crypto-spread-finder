@@ -53,7 +53,7 @@
 ## 四、ETL 脚本设计
 
 ### 功能
-- 每日或每日两次抓取 BTC/ETH 全链快照
+- 每日或每日两次抓取 BTC/ETH 全链快照（“T 型报价簿”= 以到期 × 行权价栅格形成的整链摘要）
 - 清洗并写入 Parquet 分区
 - 写出 `manifest.json`（包含 date, bases, expiries, rows, asof_ts）
 
@@ -209,7 +209,50 @@ data/parquet/
 
 ---
 
-## 十一、文件结构
+## 十一、上线与调度（初始缓存 + 北京时间 16:05 EOD 抓取）
+
+本项目采用“**上线首日即刻缓存** + **次日起每日定时抓取**”的模式：
+
+### A. 上线初始（首启）
+- **目的**：在没有历史的情况下，使用“当前时刻”的 Deribit 链摘要生成**首份快照与缓存**，保证页面立即可用。
+- **操作**：
+  ```bash
+  # 进入 backend 环境或容器
+  python scripts/etl_daily.py \
+    --base BTC --base ETH \
+    --date $(date -u +%F) \
+    --out ./data/parquet
+  ```
+- **效果**：产出 `data/parquet/dt=YYYY-MM-DD/...` 与对应的 `manifest.json`；后端启动后默认读取该分区并在内存中**预热缓存**（可选：将最近一次快照加载为只读切片，减少首次查询 IO）。
+
+### B. 次日起每日定时（北京时间 16:05）
+- **机制**：北京时间（CST, UTC+8）**16:05** 运行 ETL，抓取“最新 T 型报价簿”（即整链摘要）生成当日快照，用于后续 24 小时的计算展示。中国大陆无夏令时，时间固定。
+- **Cron（主机时区为 UTC）**：
+  ```cron
+  # 08:05 UTC == 16:05 北京时间（UTC+8）
+  5 8 * * *  /usr/bin/python /app/scripts/etl_daily.py --base BTC --base ETH --date $(date -u +\%F) --out /app/data/parquet >> /var/log/etl.log 2>&1
+  ```
+- **Cron（若容器/主机时区已设为 Asia/Shanghai）**：
+  ```cron
+  5 16 * * * /usr/bin/python /app/scripts/etl_daily.py --base BTC --base ETH --date $(date +\%F) --out /app/data/parquet >> /var/log/etl.log 2>&1
+  ```
+- **PM2 计划任务（可选）**：
+  在 `ops/ecosystem.config.cjs` 中添加一个 `cron_restart` 样例或使用 `pm2 start etl.js --cron "5 16 * * *"`（容器时区为 Asia/Shanghai 时）。
+
+### C. ETag/缓存与一致性
+- ETL 完成后写入 `manifest.json`：`{date,bases,expiries,rows,asof_ts,source:"EOD"}`；写入采用**临时文件 → 原子替换**。
+- 后端在收到新分区后：
+  - **自动选用最新 `dt=`** 作为“默认日期”；
+  - 将 `asof_ts` 暴露在 `/api/meta/asof`，前端角标显示“数据更新于 …”。
+- 前端可在“今日”视图中每 **5–15 分钟**轮询 `/api/meta/asof`，若变化则提示“数据更新，可刷新页面”。（不需要 WS 即可完成体验）
+
+### D. 失败与回退
+- ETL 失败则**保留上一日分区**继续对外服务；日志报警并重试（指数退避 3 次）。
+- 若当天 16:05 之后补抓成功，将覆盖或追加 `dt=YYYY-MM-DD` 分区，后端自动切换。
+
+---
+
+## 十二、文件结构
 
 ```
 spread-finder/
@@ -239,11 +282,12 @@ spread-finder/
     Dockerfile
   docker-compose.yml
   data/sample/ (示例存档)
+  ops/ (可选：部署脚本、PM2 配置、反代样例)
 ```
 
 ---
 
-## 十二、默认参数
+## 十三、默认参数
 
 - TENOR_NEAR_DTE = [7, 21]
 - TENOR_MID_DTE = [22, 60]
@@ -251,16 +295,16 @@ spread-finder/
 - MAX_WIDE_SPREAD_RATIO = 0.15
 - MIN_OPEN_INTEREST = 0
 - MAX_STRIKE_GAP_STEPS = 10
+- SNAPSHOT_SCHEDULE = 每日 **北京时间 16:05** 生成 `dt=YYYY-MM-DD` 分区
 
 ---
 
-## 十三、验收标准
+## 十四、验收标准
 
-- `etl_daily.py` 能成功生成 Parquet 与 manifest
-- `GET /api/meta/dates` 返回存档日期列表
-- `GET /api/expiries?date=...` 返回到期列表
+- 首启成功：`data/parquet/dt=YYYY-MM-DD` 存在，`/api/meta/dates` 返回该日期
+- 每日定时：16:05（UTC+8）后能够生成当日 `dt=...` 分区，并自动成为默认查询日期
+- `GET /api/meta/asof` 返回正确的 `asof_ts` 与来源
 - `POST /api/spread/scan` 返回四类策略的 Top/Bottom 结果
-- 前端能选择日期和参数，展示结果表格
-- 页面显示数据更新日期（as-of）
+- 前端能显示“数据更新于 …”并基于选择日期展示结果
 
 ---
