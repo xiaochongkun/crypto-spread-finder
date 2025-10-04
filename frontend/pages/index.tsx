@@ -5,7 +5,7 @@ type ScanLeg = {
   K1: number; K2: number; premium: number; max_profit: number; max_loss: number; odds: number; pop?: number | null; quality?: string | null;
 }
 type Bucket = { leg_type: 'CALL'|'PUT'; side: 'DEBIT'|'CREDIT'; top: ScanLeg[]; bottom: ScanLeg[] };
-type ScanResp = { asof_date: string; base: string; tenor: string; buckets: Bucket[] };
+type ScanResp = { asof_date: string; asof_ts: number; base: string; spot_price: number | null; tenor: string; buckets: Bucket[] };
 
 import Controls from '../components/Controls';
 import ResultBucket from '../components/ResultBucket';
@@ -53,8 +53,17 @@ export default function Home() {
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: 20 }}>
-      <h1>Spread Finder</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 8 }}>
+        <img src="/spread-finder/signalplus-logo.png" alt="SignalPlus" style={{ height: 40 }} />
+        <h1 style={{ margin: 0 }}>Spread Finder</h1>
+      </div>
       <AsOfBadge date={asOf} />
+      {result?.asof_ts && (
+        <div style={{ margin: '8px 0', padding: '8px 12px', background: '#f5f5f5', borderRadius: 6, fontSize: 14 }}>
+          <div><strong>数据获取时间:</strong> {new Date(result.asof_ts).toLocaleString('zh-CN', { timeZone: 'UTC', hour12: false })} UTC</div>
+          {result.spot_price && <div><strong>{result.base} 现货价格:</strong> ${result.spot_price.toFixed(2)}</div>}
+        </div>
+      )}
       <Controls
         base={base}
         date={date}

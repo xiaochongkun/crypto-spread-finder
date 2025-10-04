@@ -193,5 +193,20 @@ def scan_buckets(
         filtered = out_buckets
 
     base = chain_df["base"].iloc[0] if not chain_df.empty else ""
-    return {"asof_date": date, "base": base, "tenor": tenor, "buckets": filtered}
+
+    # Get spot price from chain data
+    spot_price = None
+    if not chain_df.empty and "underlying" in chain_df.columns:
+        underlying_vals = chain_df["underlying"].dropna()
+        if len(underlying_vals) > 0:
+            spot_price = float(underlying_vals.mean())
+
+    return {
+        "asof_date": date,
+        "asof_ts": asof,
+        "base": base,
+        "spot_price": spot_price,
+        "tenor": tenor,
+        "buckets": filtered
+    }
 
