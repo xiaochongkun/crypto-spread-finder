@@ -25,6 +25,19 @@ def _tenor_window(tenor: str) -> Tuple[int, int]:
     return TENOR_FAR
 
 
+def _compute_spread_ratio(bid, ask):
+    """计算 spread_ratio = (ask - bid) / ((ask + bid) / 2)
+
+    如果 bid<=0 或 ask<=0 或计算无效，返回 +inf（表示应过滤）
+    """
+    if bid is None or ask is None or bid <= 0 or ask <= 0:
+        return float('inf')
+    mid_price = (bid + ask) / 2.0
+    if mid_price <= 0:
+        return float('inf')
+    return (ask - bid) / mid_price
+
+
 def _prep_chain(df: pd.DataFrame) -> pd.DataFrame:
     # Ensure minimal columns are present and compute mid/quality
     req = [
@@ -48,13 +61,17 @@ def _prep_chain(df: pd.DataFrame) -> pd.DataFrame:
 
     mids = []
     qflags = []
+    spread_ratios = []
     for bid, ask, mark in zip(df["bid"].tolist(), df["ask"].tolist(), df["mark_price"].tolist()):
         mid = compute_mid(_nan_to_none(bid), _nan_to_none(ask), _nan_to_none(mark))
         mids.append(mid)
         qflags.append(spread_flag(_nan_to_none(bid), _nan_to_none(ask), _nan_to_none(mid)))
+        spread_ratios.append(_compute_spread_ratio(_nan_to_none(bid), _nan_to_none(ask)))
+
     df = df.copy()
     df["mid"] = mids
     df["quality_flag"] = qflags
+    df["spread_ratio"] = spread_ratios
     return df
 
 
@@ -114,6 +131,10 @@ def scan_buckets(
     date = meta.date
 
     df = df[df["mid"].notna()].copy()
+
+    # 过滤 spread_ratio > 0.5 的期权（买卖价差过宽，流动性差）
+    df = df[df["spread_ratio"] <= 0.5].copy()
+
     if min_oi:
         df = df[df["oi"].fillna(0) >= min_oi]
 
@@ -185,8 +206,15 @@ def scan_buckets(
                         debit = _calc_vertical_metrics("PUT", "DEBIT", k1, k2, long_px=m2, short_px=m1, s=s, iv=iv, t_years=t_years)
                         credit = _calc_vertical_metrics("PUT", "CREDIT", k1, k2, long_px=m1, short_px=m2, s=s, iv=iv, t_years=t_years)
 
-                    legs_debit.append({"K1": k1, "K2": k2, **debit, "quality": qflag})
-                    legs_credit.append({"K1": k1, "K2": k2, **credit, "quality": qflag})
+                    # 过滤掉权利金过小的组合（金本位USD < 10）
+                    # 避免深度虚值期权导致的极端赔率
+                    premium_usd_debit = abs(debit["premium"]) * s
+                    premium_usd_credit = abs(credit["premium"]) * s
+
+                    if premium_usd_debit >= 10:
+                        legs_debit.append({"K1": k1, "K2": k2, **debit, "quality": qflag})
+                    if premium_usd_credit >= 10:
+                        legs_credit.append({"K1": k1, "K2": k2, **credit, "quality": qflag})
 
             # Rank by odds
             def _rank(lst: List[Dict]):

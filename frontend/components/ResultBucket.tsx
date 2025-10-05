@@ -27,7 +27,7 @@ export default function ResultBucket({ bucket, spotPrice }: ResultBucketProps) {
   // 借方价差只显示top 3，贷方价差只显示bottom 3
   const isDebit = bucket.side === 'DEBIT';
   const strategies = isDebit ? bucket.top.slice(0, 3) : bucket.bottom.slice(0, 3);
-  const rankLabel = isDebit ? 'Top 3（高赔率）' : 'Bottom 3（高赔率）';
+  const rankLabel = isDebit ? 'Top 3（高赔率）' : 'Bottom 3（低赔率）';
 
   // 策略点评：简化为关键点
   const commentary = isDebit ? '小成本博取大回报' : '最具性价比的鸭子策略';
@@ -73,7 +73,15 @@ export default function ResultBucket({ bucket, spotPrice }: ResultBucketProps) {
             <tr style={{ background: '#f8f9fa' }}>
               <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>执行价1</th>
               <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>执行价2</th>
-              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>权利金</th>
+              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>
+                权利金{' '}
+                <span
+                  style={{ cursor: 'help', color: '#666' }}
+                  title="数据过滤规则：&#10;1. 过滤单腿期权 spread_ratio > 0.5（买卖价差超过中间价50%）&#10;2. 过滤组合权利金 < $10（避免深度虚值期权）"
+                >
+                  🛈
+                </span>
+              </th>
               <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>最大收益</th>
               <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>最大亏损</th>
               <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>赔率</th>

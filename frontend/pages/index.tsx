@@ -163,7 +163,7 @@ export default function Home() {
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
         <img src="/spread-finder/signalplus-logo.png" alt="SignalPlus" style={{ height: 40 }} />
-        <h1 style={{ margin: 0 }}>期权价差策略分析</h1>
+        <h1 style={{ margin: 0 }}>期权价差策略推荐</h1>
       </div>
 
       {/* 数据信息 */}
@@ -217,6 +217,11 @@ export default function Home() {
           ))}
         </div>
       )}
+
+      {/* 免责声明 */}
+      <div style={{ marginTop: 32, paddingTop: 16, borderTop: '1px solid #ddd', textAlign: 'center', fontSize: 12, color: '#999' }}>
+        仅教育用途，非投资建议，数据来源于 Deribit
+      </div>
     </div>
   );
 }
