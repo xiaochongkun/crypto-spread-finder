@@ -8,7 +8,7 @@ from typing import Dict, List, Tuple
 import pandas as pd
 
 
-DATA_ROOT = Path("data/parquet")
+DATA_ROOT = Path(__file__).parent.parent.parent / "data" / "parquet"
 
 
 def _date_dir(date: str) -> Path:

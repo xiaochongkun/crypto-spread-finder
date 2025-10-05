@@ -7,27 +7,34 @@
 ### 1. spread-finder-api
 **后端 FastAPI 服务**
 ```bash
-pm2 start "uv run uvicorn app.main:app --host 127.0.0.1 --port 3115" \
+TS_IP=$(tailscale ip -4 | head -n1)
+pm2 start /bin/bash \
   --name spread-finder-api \
-  --cwd /home/kunkka/projects/spread-finder/backend
+  --cwd /home/kunkka/projects/spread-finder \
+  -- -lc "backend/.venv/bin/uvicorn backend.app.main:app --host ${TS_IP} --port 3115 --workers 2 --root-path /spread-finder"
 ```
 
 ### 2. spread-finder-web
 **前端 Next.js 服务**
 ```bash
-cd /home/kunkka/projects/spread-finder/frontend
-pm2 start npm --name spread-finder-web -- start
+TS_IP=${TS_IP:-$(tailscale ip -4 | head -n1)}
+pm2 start /bin/bash \
+  --name spread-finder-web \
+  --cwd /home/kunkka/projects/spread-finder/frontend \
+  -- -lc "HOST=${TS_IP} HOSTNAME=${TS_IP} PORT=3117 NEXT_PUBLIC_BASE_PATH=/spread-finder \
+    NEXT_PUBLIC_API_PROXY_DEST=http://${TS_IP}:3115 node .next/standalone/server.js"
 ```
 
 ### 3. spread-finder-etl
-**ETL 定时任务 (北京时间 16:05 = UTC 08:05)**
+**ETL 定时任务 (每小时整点执行)**
 ```bash
 cd /home/kunkka/projects/spread-finder/backend
 pm2 start "uv run python scripts/etl_daily.py --bases BTC ETH --date \$(date -u +%Y-%m-%d)" \
   --name spread-finder-etl \
-  --cron "5 8 * * *" \
+  --cron "0 * * * *" \
   --no-autorestart
 ```
+⚠️ **重要**: 必须添加 `--no-autorestart` 参数，否则任务会持续重启导致 asof_ts 不断更新
 
 ## 快速操作命令
 
@@ -89,7 +96,7 @@ pm2 save
 
 ### 前端环境变量
 - `NEXT_PUBLIC_BASE_PATH=/spread-finder` - Next.js 基础路径
-- `NEXT_PUBLIC_API_PROXY_DEST=http://127.0.0.1:3115` - API 代理目标
+- `NEXT_PUBLIC_API_PROXY_DEST` - API 代理目标（生产环境使用 `http://<tailscale-ip>:3115`）
 
 ## 更新部署流程
 
@@ -116,8 +123,9 @@ git pull
 npm install
 
 # 重新构建
+TS_IP=$(tailscale ip -4 | head -n1) \
 NEXT_PUBLIC_BASE_PATH=/spread-finder \
-NEXT_PUBLIC_API_PROXY_DEST=http://127.0.0.1:3115 \
+NEXT_PUBLIC_API_PROXY_DEST=http://${TS_IP}:3115 \
 npm run build
 
 # 重启服务
@@ -141,15 +149,16 @@ uv run python scripts/etl_daily.py --bases BTC ETH
 ### 健康检查
 ```bash
 # 后端健康检查
-curl http://127.0.0.1:3115/api/health
+TS_IP=${TS_IP:-$(tailscale ip -4 | head -n1)}
+curl http://${TS_IP}:3115/spread-finder/api/health
 # 预期输出: {"status":"ok"}
 
 # 前端健康检查
-curl -I http://127.0.0.1:3000/spread-finder
+curl -I http://${TS_IP}:3117/spread-finder
 # 预期: HTTP 200
 
 # 检查数据是否最新
-curl http://127.0.0.1:3115/api/meta/dates | jq
+curl http://${TS_IP}:3115/spread-finder/api/meta/dates | jq
 ```
 
 ### 使用 Apprise 发送通知

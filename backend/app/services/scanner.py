@@ -68,21 +68,26 @@ def _within_tenor(dte: float, tw: Tuple[int, int]) -> bool:
 
 def _calc_vertical_metrics(kind: str, side: str, k1: float, k2: float, long_px: float, short_px: float,
                            s: float, iv: float, t_years: float) -> Dict:
-    # Premium: debit: long - short; credit: short - long
-    if side == "DEBIT":
-        premium = (long_px - short_px)
-        max_profit = max(0.0, (k2 - k1)) - premium
-        max_loss = premium
-    else:
-        premium = (short_px - long_px)
-        max_profit = premium
-        max_loss = max(0.0, (k2 - k1)) - premium
+    # Premium: debit: long - short; credit: short - long (币本位)
+    strike_width = abs(k2 - k1)  # 金本位差价 (USD)
 
-    # Guard against invalid values
-    if max_loss <= 0:
-        odds = float("inf") if max_profit > 0 else float("nan")
+    if side == "DEBIT":
+        premium = (long_px - short_px)  # 币本位
+        # 借方价差：最大收益 = 行权价差价（金本位USD），最大亏损 = 权利金付出（币本位）
+        max_profit = strike_width  # 金本位
+        max_loss = premium  # 币本位
     else:
-        odds = max_profit / max_loss
+        premium = (short_px - long_px)  # 币本位
+        # 贷方价差：最大收益 = 权利金收入（币本位），最大亏损 = 行权价差价（金本位USD）
+        max_profit = premium  # 币本位
+        max_loss = strike_width  # 金本位
+
+    # 赔率 = 行权价差价(USD) / 权利金的金本位数值(USD)
+    premium_usd = premium * s
+    if premium_usd <= 0:
+        odds = float("inf") if strike_width > 0 else float("nan")
+    else:
+        odds = strike_width / premium_usd
 
     pop = pop_for_vertical(kind=kind, side=side, s=s, k1=k1, k2=k2, premium=premium, vol=max(iv, 1e-6), t_years=max(t_years, 1e-6))
 
@@ -144,6 +149,19 @@ def scan_buckets(
                     k2 = float(strikes[j])
                     if max_width is not None and (k2 - k1) > max_width:
                         continue
+
+                    # 过滤实值期权（ITM）
+                    # 看涨期权：过滤掉 K < 现货价格
+                    # 看跌期权：过滤掉 K > 现货价格
+                    if kind == "CALL":
+                        # 看涨价差：两个执行价都应该是虚值或平值（K >= S）
+                        if k1 < s or k2 < s:
+                            continue
+                    else:  # PUT
+                        # 看跌价差：两个执行价都应该是虚值或平值（K <= S）
+                        if k1 > s or k2 > s:
+                            continue
+
                     # For calls: debit long k1, short k2; credit short k1, long k2
                     # For puts (put debit defined as buy K2 sell K1 in doc), we keep same K ordering (k1<k2)
                     m1 = float(mids[i])
