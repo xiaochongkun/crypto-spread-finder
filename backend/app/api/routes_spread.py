@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from ..services.loader import load_chain_for
-from ..services.scanner import scan_buckets
+from ..services.loader import load_chain_for, get_latest_date
+from ..services.scanner import scan_buckets, scan_opinion_spreads
 
 
 class ScanRequest(BaseModel):
@@ -15,6 +15,15 @@ class ScanRequest(BaseModel):
     return_per_bucket: int = 3
     min_oi: int | None = Field(default=0)
     max_width: float | None = Field(default=None, description="max K2-K1 width in underlying units")
+
+
+class OpinionRequest(BaseModel):
+    base: str = Field(..., pattern=r"^(BTC|ETH)$")
+    horizon: str = Field(..., pattern=r"^(short|mid|long)$", description="short: ≤1month, mid: 1-3months, long: ≥3months")
+    direction: str = Field(..., pattern=r"^(up|down)$")
+    target_price: float = Field(..., gt=0, description="Target price in USD")
+    max_gap_steps: int = Field(default=8, description="Max strike steps from K1")
+    return_per_bucket: int = Field(default=3, description="Top N strategies to return")
 
 
 router = APIRouter()
@@ -35,6 +44,31 @@ def scan(req: ScanRequest):
         return_per_bucket=req.return_per_bucket,
         min_oi=req.min_oi or 0,
         max_width=req.max_width,
+    )
+    return result
+
+
+@router.post("/spread/opinion")
+def opinion(req: OpinionRequest):
+    """
+    根据用户观点（目标价 + 时间范围）筛选最优价差策略
+    固定 K1 = target_price，跨到期聚合，返回赔率最高的 Top N
+    """
+    try:
+        # 使用最新日期的数据
+        latest_date = get_latest_date()
+        chain, meta = load_chain_for(date=latest_date, base=req.base)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="data not found")
+
+    result = scan_opinion_spreads(
+        chain_df=chain,
+        meta=meta,
+        horizon=req.horizon,
+        direction=req.direction,
+        target_price=req.target_price,
+        max_gap_steps=req.max_gap_steps,
+        return_count=req.return_per_bucket,
     )
     return result
 

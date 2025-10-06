@@ -42,6 +42,14 @@ def list_available_dates() -> List[str]:
     return sorted(list(dates_set))
 
 
+def get_latest_date() -> str:
+    """获取最新的数据日期"""
+    dates = list_available_dates()
+    if not dates:
+        raise FileNotFoundError("No data available")
+    return dates[-1]
+
+
 def list_expiries_for(date: str, base: str) -> List[int]:
     root = _date_dir(date)
     out: List[int] = []

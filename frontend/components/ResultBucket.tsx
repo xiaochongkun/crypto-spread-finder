@@ -32,6 +32,14 @@ export default function ResultBucket({ bucket, spotPrice }: ResultBucketProps) {
   // 策略点评：简化为关键点
   const commentary = isDebit ? '小成本博取大回报' : '最具性价比的鸭子策略';
 
+  // 格式化数字，添加千位分隔符
+  const formatNumber = (num: number, decimals: number = 2): string => {
+    return num.toLocaleString('en-US', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    });
+  };
+
   const Row = ({ it }: { it: ScanLeg }) => {
     // 权利金是币本位，需要转换
     const premiumUsd = it.premium * spotPrice;
@@ -44,16 +52,16 @@ export default function ResultBucket({ bucket, spotPrice }: ResultBucketProps) {
 
     return (
       <tr>
-        <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>{it.K1}</td>
-        <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>{it.K2}</td>
+        <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>{formatNumber(it.K1, 0)}</td>
+        <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>{formatNumber(it.K2, 0)}</td>
         <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>
-          {it.premium.toFixed(4)} (${premiumUsd.toFixed(2)})
+          {it.premium.toFixed(4)} (${formatNumber(premiumUsd, 2)})
         </td>
         <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>
-          ${maxProfitUsd.toFixed(2)}
+          ${formatNumber(maxProfitUsd, 2)}
         </td>
         <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>
-          ${maxLossUsd.toFixed(2)}
+          ${formatNumber(maxLossUsd, 2)}
         </td>
         <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>{Number.isFinite(it.odds) ? it.odds.toFixed(1) : '—'}</td>
       </tr>
