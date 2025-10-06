@@ -240,12 +240,12 @@ def scan_buckets(
 
     base = chain_df["base"].iloc[0] if not chain_df.empty else ""
 
-    # Get spot price from chain data
-    spot_price = None
-    if not chain_df.empty and "underlying" in chain_df.columns:
+    # Get spot price: 优先使用 manifest 中的标准指数价格，否则回退到期权数据的平均值
+    spot_price = meta.spot_price
+    if spot_price is None and not chain_df.empty and "underlying" in chain_df.columns:
         underlying_vals = chain_df["underlying"].dropna()
         if len(underlying_vals) > 0:
-            spot_price = float(underlying_vals.mean())
+            spot_price = float(underlying_vals.median())  # 使用中位数更稳健
 
     return {
         "asof_date": date,

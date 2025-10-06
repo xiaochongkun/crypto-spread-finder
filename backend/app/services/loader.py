@@ -12,6 +12,12 @@ DATA_ROOT = Path(__file__).parent.parent.parent / "data" / "parquet"
 
 
 def _date_dir(date: str) -> Path:
+    """获取指定日期的最新时间戳目录"""
+    # 查找该日期的所有时间戳目录（dt=YYYY-MM-DD-HH 格式）
+    matching_dirs = sorted(DATA_ROOT.glob(f"dt={date}-*"), reverse=True)
+    if matching_dirs:
+        return matching_dirs[0]  # 返回最新的（小时最大的）
+    # 向后兼容：如果没有找到带时间戳的，尝试旧格式
     return DATA_ROOT / f"dt={date}"
 
 
@@ -23,13 +29,17 @@ def get_manifest(date: str) -> Dict:
 
 
 def list_available_dates() -> List[str]:
+    """列出所有可用的日期（YYYY-MM-DD格式）"""
     if not DATA_ROOT.exists():
         return []
-    dates = []
+    dates_set = set()
     for p in sorted(DATA_ROOT.glob("dt=*")):
         if p.is_dir():
-            dates.append(p.name.split("=", 1)[1])
-    return dates
+            timestamp = p.name.split("=", 1)[1]
+            # 提取日期部分（YYYY-MM-DD），去掉小时部分（-HH）
+            date = timestamp[:10] if len(timestamp) >= 10 else timestamp
+            dates_set.add(date)
+    return sorted(list(dates_set))
 
 
 def list_expiries_for(date: str, base: str) -> List[int]:
@@ -50,6 +60,7 @@ class ChainMeta:
     date: str
     asof_ts: int
     bases: List[str]
+    spot_price: float | None = None  # 新增：标准现货指数价格
 
 
 def load_chain_for(date: str, base: str) -> Tuple[pd.DataFrame, ChainMeta]:
@@ -66,10 +77,14 @@ def load_chain_for(date: str, base: str) -> Tuple[pd.DataFrame, ChainMeta]:
     df = pd.concat(dfs, ignore_index=True)
 
     manifest_d = get_manifest(date)
+    spot_prices = manifest_d.get("spot_prices", {})
+    spot_price = spot_prices.get(base) if spot_prices else None
+
     meta = ChainMeta(
         date=date,
         asof_ts=int(manifest_d.get("asof_ts", 0)),
         bases=manifest_d.get("bases", []),
+        spot_price=spot_price,
     )
     return df, meta
 

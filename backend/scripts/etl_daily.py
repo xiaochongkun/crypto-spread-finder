@@ -58,12 +58,28 @@ async def fetch_instruments(client: httpx.AsyncClient, currency: str) -> Dict[st
     return out
 
 
+async def fetch_index_price(client: httpx.AsyncClient, currency: str) -> float:
+    """获取标准的现货指数价格"""
+    index_name = f"{currency.lower()}_usd"
+    r = await client.get(
+        f"{DERIBIT}/public/get_index_price",
+        params={"index_name": index_name},
+        timeout=30.0,
+    )
+    r.raise_for_status()
+    result = r.json().get("result", {})
+    return float(result.get("index_price", 0))
+
+
 async def run_once(date_str: str, bases: List[str]) -> None:
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
-    dt_dir = DATA_ROOT / f"dt={date_str}"
-    dt_dir.mkdir(parents=True, exist_ok=True)
 
-    asof_ts = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+    # 使用完整的时间戳命名：dt=YYYY-MM-DD-HH
+    now_utc = datetime.now(tz=timezone.utc)
+    asof_ts = int(now_utc.timestamp() * 1000)
+    timestamp_str = now_utc.strftime("%Y-%m-%d-%H")
+    dt_dir = DATA_ROOT / f"dt={timestamp_str}"
+    dt_dir.mkdir(parents=True, exist_ok=True)
 
     async with httpx.AsyncClient() as client:
         tasks = [fetch_book_summary(client, b) for b in bases]
@@ -72,7 +88,20 @@ async def run_once(date_str: str, bases: List[str]) -> None:
         ins_tasks = [fetch_instruments(client, b) for b in bases]
         ins_by_base = await asyncio.gather(*ins_tasks)
 
-    manifest = {"date": date_str, "asof_ts": asof_ts, "bases": bases, "rows": 0, "expiries": {}}
+        # 获取标准现货指数价格
+        index_tasks = [fetch_index_price(client, b) for b in bases]
+        index_prices = await asyncio.gather(*index_tasks)
+        spot_prices = dict(zip(bases, index_prices))
+
+    manifest = {
+        "date": date_str,
+        "timestamp": timestamp_str,
+        "asof_ts": asof_ts,
+        "bases": bases,
+        "rows": 0,
+        "expiries": {},
+        "spot_prices": spot_prices
+    }
 
     total_rows = 0
     for base, rows, ins_map in zip(bases, book_by_base, ins_by_base):
