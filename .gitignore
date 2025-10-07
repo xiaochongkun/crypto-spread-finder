@@ -68,3 +68,12 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+
+# Admin and deployment docs (internal only)
+CADDY_CONFIG_REQUEST.txt
+DEPLOYMENT_COMPLETE.md
+PERMISSION_FIX_NEEDED.md
+PRODUCTION_STATUS.md
+QUICK_REQUEST.txt
+REQUEST_TO_ADMIN.md
+URGENT_CADDY_UPDATE.txt
