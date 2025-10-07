@@ -20,9 +20,9 @@ class ScanRequest(BaseModel):
 class OpinionRequest(BaseModel):
     base: str = Field(..., pattern=r"^(BTC|ETH)$")
     horizon: str = Field(..., pattern=r"^(short|mid|long)$", description="short: ≤1month, mid: 1-3months, long: ≥3months")
-    direction: str = Field(..., pattern=r"^(up|down)$")
+    view: str = Field(..., pattern=r"^(up|down|not_up|not_down)$", description="up/down: debit spread; not_up/not_down: credit spread")
     target_price: float = Field(..., gt=0, description="Target price in USD")
-    max_gap_steps: int = Field(default=8, description="Max strike steps from K1")
+    max_gap_steps: int = Field(default=8, description="Max strike steps from anchor")
     return_per_bucket: int = Field(default=3, description="Top N strategies to return")
 
 
@@ -52,7 +52,8 @@ def scan(req: ScanRequest):
 def opinion(req: OpinionRequest):
     """
     根据用户观点（目标价 + 时间范围）筛选最优价差策略
-    固定 K1 = target_price，跨到期聚合，返回赔率最高的 Top N
+    - up/down: 借方价差（付权利金）
+    - not_up/not_down: 贷方价差（收权利金）
     """
     try:
         # 使用最新日期的数据
@@ -65,7 +66,7 @@ def opinion(req: OpinionRequest):
         chain_df=chain,
         meta=meta,
         horizon=req.horizon,
-        direction=req.direction,
+        view=req.view,
         target_price=req.target_price,
         max_gap_steps=req.max_gap_steps,
         return_count=req.return_per_bucket,

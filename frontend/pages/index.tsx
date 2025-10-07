@@ -20,29 +20,58 @@ function formatNumber(num: number, decimals: number = 2): string {
   });
 }
 
-// Opinion 结果展示组件（删除 POP 和质量列，新增到期日列）
+// Opinion 结果展示组件
 function OpinionResultDisplay({ result, spotPrice }: { result: any; spotPrice: number }) {
   const items = result.items || [];
-  const direction = result.direction;
+  const view = result.view;
+  const side = result.side;
   const anchorLeg = result.anchor_leg;
   const anchorStrike = result.anchor_strike;
+  const base = result.base || 'BTC';
 
-  const isUp = direction === 'up';
-  const title = isUp ? '看涨期权 - 借方价差（付权利金）' : '看跌期权 - 借方价差（付权利金）';
-  const anchorLabel = isUp ? `K2 固定：${(anchorStrike / 1000).toFixed(0)}k` : `K1 固定：${(anchorStrike / 1000).toFixed(0)}k`;
-  const description = isUp ? '小成本博取大回报' : '趋势型看跌布局';
-  const subtitle = `Top ${items.length}（高赔率） · ${anchorLabel} · ${description}`;
+  // 根据 base 确定行权价显示单位
+  const strikeUnit = base === 'BTC' ? 1000 : 100;
+  const strikeLabel = base === 'BTC' ? 'k' : '';
+
+  // 根据 view 确定标题和描述
+  const viewConfig = {
+    up: {
+      title: '看涨期权 - 借方价差（付权利金）',
+      description: '小成本博取大回报',
+      ranking: 'Top'
+    },
+    down: {
+      title: '看跌期权 - 借方价差（付权利金）',
+      description: '趋势型看跌布局',
+      ranking: 'Top'
+    },
+    not_up: {
+      title: '看涨期权 - 贷方价差（收权利金）',
+      description: '最具性价比的鸭子策略',
+      ranking: 'Bottom'
+    },
+    not_down: {
+      title: '看跌期权 - 贷方价差（收权利金）',
+      description: '区间防守型策略',
+      ranking: 'Bottom'
+    }
+  };
+
+  const config = viewConfig[view as keyof typeof viewConfig] || viewConfig.up;
+  const anchorLabel = `${anchorLeg} 固定：${(anchorStrike / strikeUnit).toFixed(0)}${strikeLabel}`;
+  const rankingLabel = side === 'CREDIT' ? '（低赔率）' : '（高赔率）';
+  const subtitle = `${config.ranking} ${items.length}${rankingLabel} · ${anchorLabel} · ${config.description}`;
 
   const horizonText = result.horizon === 'short' ? '≤1个月' : result.horizon === 'mid' ? '1-3个月' : '≥3个月';
 
   return (
     <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, marginBottom: 16, background: '#fff' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-        <h3 style={{ margin: 0, fontSize: 18, color: '#333' }}>{title}</h3>
+        <h3 style={{ margin: 0, fontSize: 18, color: '#333' }}>{config.title}</h3>
         <span style={{ fontSize: 13, color: '#007bff', fontWeight: 'bold' }}>{subtitle}</span>
       </div>
       <p style={{ margin: '0 0 12px 0', fontSize: 13, color: '#666', fontStyle: 'italic' }}>
-        已筛选出 {horizonText} 内到期的期权链中，{anchorLabel} 时赔率最高的策略。
+        已筛选出 {horizonText} 内到期的期权链中，{anchorLabel} 时{side === 'CREDIT' ? '胜率最高' : '赔率最高'}的策略。
         {result.notes?.strike_snapped && ' （目标价已对齐至最近行权价）'}
       </p>
       <div style={{ overflowX: 'auto' }}>
@@ -70,10 +99,20 @@ function OpinionResultDisplay({ result, spotPrice }: { result: any; spotPrice: n
           </thead>
           <tbody>
             {items.map((s: any, idx: number) => {
-              const premiumUsd = s.premium * spotPrice;
-              // 借方价差：max_profit 是金本位，max_loss 是币本位
-              const maxProfitUsd = s.max_profit;
-              const maxLossUsd = s.max_loss * spotPrice;
+              const premiumUsd = Math.abs(s.premium) * spotPrice;
+
+              // 借方价差：max_profit 是金本位 USD，max_loss 是币本位（需乘以现货价）
+              // 贷方价差：max_profit 是币本位（需乘以现货价），max_loss 是金本位 USD
+              let maxProfitUsd: number;
+              let maxLossUsd: number;
+
+              if (side === 'DEBIT') {
+                maxProfitUsd = s.max_profit;
+                maxLossUsd = s.max_loss * spotPrice;
+              } else {
+                maxProfitUsd = s.max_profit * spotPrice;
+                maxLossUsd = s.max_loss;
+              }
 
               return (
                 <tr key={idx}>
@@ -97,7 +136,9 @@ function OpinionResultDisplay({ result, spotPrice }: { result: any; spotPrice: n
         </table>
       </div>
       <p style={{ margin: '12px 0 0 0', fontSize: 12, color: '#999', fontStyle: 'italic' }}>
-        借方价差：最大亏损 = 权利金；最大利润 = |K2 - K1| - 权利金
+        {side === 'DEBIT'
+          ? '借方价差：最大利润 = |K2 - K1| - 权利金；最大亏损 = 权利金'
+          : '贷方价差：最大利润 = 权利金收入；最大亏损 = 价差 - 权利金'}
       </p>
     </div>
   );
@@ -148,14 +189,14 @@ export default function Home() {
 
   // Opinion Tab 状态
   const [opinionHorizon, setOpinionHorizon] = useState<'short'|'mid'|'long'>('mid');
-  const [opinionDirection, setOpinionDirection] = useState<'up'|'down'>('up');
+  const [opinionView, setOpinionView] = useState<'up'|'down'|'not_up'|'not_down'>('up');
   const [opinionTarget, setOpinionTarget] = useState<string>('150');
   const [opinionResult, setOpinionResult] = useState<any>(null);
 
   // 切换币种时调整目标价默认值
   useEffect(() => {
-    // BTC默认135(k$=135000), ETH默认55(h$=5500)
-    setOpinionTarget(base === 'BTC' ? '135' : '55');
+    // BTC默认150(k$=150000), ETH默认45(h$=4500)
+    setOpinionTarget(base === 'BTC' ? '150' : '45');
   }, [base]);
 
   // 加载日期列表
@@ -285,7 +326,7 @@ export default function Home() {
         body: JSON.stringify({
           base,
           horizon: opinionHorizon,
-          direction: opinionDirection,
+          view: opinionView,
           target_price: targetPriceUsd,
           max_gap_steps: 8,
           return_per_bucket: 3
@@ -377,10 +418,12 @@ export default function Home() {
             </label>
 
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <strong>趋势方向</strong>
-              <select value={opinionDirection} onChange={e => setOpinionDirection(e.target.value as any)} style={{ padding: 8, fontSize: 14 }}>
-                <option value="up">上涨到 ≥</option>
-                <option value="down">下跌到 ≤</option>
+              <strong>观点类型</strong>
+              <select value={opinionView} onChange={e => setOpinionView(e.target.value as any)} style={{ padding: 8, fontSize: 14 }}>
+                <option value="up">会上涨到 ≥</option>
+                <option value="down">会下跌到 ≤</option>
+                <option value="not_up">不会上涨到 ≥</option>
+                <option value="not_down">不会下跌到 ≤</option>
               </select>
             </label>
 

@@ -297,16 +297,18 @@ def scan_opinion_spreads(
     chain_df: pd.DataFrame,
     meta,
     horizon: str,
-    direction: str,
+    view: str,
     target_price: float,
     max_gap_steps: int = 8,
     return_count: int = 3,
 ):
     """
     根据用户观点筛选价差策略：
-    - 看涨（up）：固定 K2 = target_price，枚举 K1 < K2 的 Call 借方价差
-    - 看跌（down）：固定 K1 = target_price，枚举 K2 < K1 的 Put 借方价差
-    跨到期聚合，返回赔率最高的 Top N 策略
+    - up: 会上涨到 ≥ P → Call 借方价差（固定 K2=P，枚举 K1<K2）
+    - down: 会下跌到 ≤ P → Put 借方价差（固定 K1=P，枚举 K2<K1）
+    - not_up: 不会上涨到 ≥ P → Call 贷方价差（固定 K2=P，枚举 K1<K2）
+    - not_down: 不会下跌到 ≤ P → Put 贷方价差（固定 K1=P，枚举 K2<K1）
+    跨到期聚合，返回赔率最高/最低的 Top N 策略
     """
     df = _prep_chain(chain_df)
     asof = int(meta.asof_ts)
@@ -322,6 +324,24 @@ def scan_opinion_spreads(
     tmin, tmax = _horizon_window(horizon)
     df = df[(df["dte"] >= tmin) & (df["dte"] <= tmax)].copy()
 
+    # 确定期权类型和价差类型
+    if view == "up":
+        kind = "CALL"
+        side = "DEBIT"
+        anchor_leg = "K2"
+    elif view == "not_up":
+        kind = "CALL"
+        side = "CREDIT"
+        anchor_leg = "K1"  # 固定 K1=P，卖出 K1 Call
+    elif view == "down":
+        kind = "PUT"
+        side = "DEBIT"
+        anchor_leg = "K1"
+    else:  # not_down
+        kind = "PUT"
+        side = "CREDIT"
+        anchor_leg = "K1"  # 固定 K1=P，卖出 K1 Put
+
     if df.empty:
         return {
             "asof_date": date,
@@ -329,15 +349,14 @@ def scan_opinion_spreads(
             "base": meta.base if hasattr(meta, 'base') else chain_df["base"].iloc[0] if not chain_df.empty else "",
             "spot_price": meta.spot_price,
             "horizon": horizon,
-            "direction": direction,
-            "anchor_leg": "K2" if direction == "up" else "K1",
+            "view": view,
+            "anchor_leg": anchor_leg,
             "anchor_strike": target_price,
             "items": [],
             "notes": {"strike_snapped": False, "original_target": target_price}
         }
 
-    # 根据 direction 选择期权类型
-    kind = "CALL" if direction == "up" else "PUT"
+    # 根据 view 选择期权类型
     df = df[df["option_type"].str.upper() == ("C" if kind == "CALL" else "P")].copy()
 
     if df.empty:
@@ -347,8 +366,8 @@ def scan_opinion_spreads(
             "base": chain_df["base"].iloc[0] if not chain_df.empty else "",
             "spot_price": meta.spot_price,
             "horizon": horizon,
-            "direction": direction,
-            "anchor_leg": "K2" if direction == "up" else "K1",
+            "view": view,
+            "anchor_leg": anchor_leg,
             "anchor_strike": target_price,
             "items": [],
             "notes": {"strike_snapped": False, "original_target": target_price}
@@ -358,7 +377,6 @@ def scan_opinion_spreads(
     strike_snapped = False
 
     # 收集所有到期日的行权价并集，用于snap目标价
-    # 这样可以找到最接近目标价的行权价，即使某些到期日没有该行权价
     all_strikes = sorted(df["strike"].unique())
     if len(all_strikes) == 0:
         return {
@@ -367,8 +385,8 @@ def scan_opinion_spreads(
             "base": chain_df["base"].iloc[0] if not chain_df.empty else "",
             "spot_price": meta.spot_price,
             "horizon": horizon,
-            "direction": direction,
-            "anchor_leg": "K2" if direction == "up" else "K1",
+            "view": view,
+            "anchor_leg": anchor_leg,
             "anchor_strike": target_price,
             "items": [],
             "notes": {"strike_snapped": False, "original_target": target_price}
@@ -400,103 +418,141 @@ def scan_opinion_spreads(
         anchor_strike = unified_anchor_strike
         anchor_mid = float(mids[anchor_idx])
 
-        # 根据 direction 确定锚定腿和候选腿
-        if direction == "up":
-            # 看涨：固定 K2 = anchor_strike（目标价），枚举 K1 < K2
-            # K2 应该是虚值（>= 现价），K1 可以低于现价以覆盖上涨区间
-            k2 = anchor_strike
-            k2_idx = anchor_idx
-            m2 = anchor_mid
-
-            # K2（目标价）应该大于等于现价，否则不符合看涨预期
+        # 根据 view 确定锚定腿和候选腿
+        if view == "up":
+            # 会上涨到 ≥ P：Call 借方价差，固定 K2=P，枚举 K1<K2
+            k2, k2_idx, m2 = anchor_strike, anchor_idx, anchor_mid
             if k2 < s:
                 continue
-
-            # 找到 K1 候选：K1 < K2，不限制 K1 必须 >= S
-            # 这样可以推荐如 3000-5500 的价差（当前价 3200，目标 5500）
             k1_candidates = [(i, k, m) for i, (k, m) in enumerate(zip(strikes, mids))
                            if k < k2 and i >= anchor_idx - max_gap_steps]
 
             for k1_idx, k1, m1 in k1_candidates:
-                # 检查质量
-                q1 = grp.iloc[k1_idx]["quality_flag"]
-                q2 = grp.iloc[k2_idx]["quality_flag"]
+                q1, q2 = grp.iloc[k1_idx]["quality_flag"], grp.iloc[k2_idx]["quality_flag"]
                 if q1 in ("missing", "invalid") or q2 in ("missing", "invalid"):
                     continue
 
-                # Call 借方价差：买 K1（低），卖 K2（高）
-                metrics = _calc_vertical_metrics("CALL", "DEBIT", k1, k2, long_px=m1, short_px=m2,
-                                                s=s, iv=iv, t_years=t_years)
-
-                # 过滤权利金过小的组合
+                metrics = _calc_vertical_metrics("CALL", "DEBIT", k1, k2, long_px=m1, short_px=m2, s=s, iv=iv, t_years=t_years)
                 premium_usd = abs(metrics["premium"]) * s
-                if premium_usd < 10:
-                    continue
-
-                # 跳过异常赔率
-                if math.isnan(metrics["odds"]) or metrics["odds"] == float("inf"):
+                if premium_usd < 10 or math.isnan(metrics["odds"]) or metrics["odds"] == float("inf"):
                     continue
 
                 candidates.append({
                     "expiry_ts": int(exp_ts),
                     "expiry_date": pd.Timestamp(exp_ts, unit='ms').strftime('%Y-%m-%d'),
-                    "K1": float(k1),
-                    "K2": float(k2),
+                    "K1": float(k1), "K2": float(k2),
                     "premium": metrics["premium"],
                     "max_profit": metrics["max_profit"],
                     "max_loss": metrics["max_loss"],
                     "odds": metrics["odds"],
                 })
 
-        else:
-            # 看跌：固定 K1 = anchor_strike（目标价），枚举 K2 < K1
-            # K1 应该是虚值（<= 现价），K2 可以高于现价以覆盖下跌区间
-            k1 = anchor_strike
-            k1_idx = anchor_idx
-            m1 = anchor_mid
-
-            # K1（目标价）应该小于等于现价，否则不符合看跌预期
+        elif view == "down":
+            # 会下跌到 ≤ P：Put 借方价差，固定 K1=P，枚举 K2<K1
+            k1, k1_idx, m1 = anchor_strike, anchor_idx, anchor_mid
             if k1 > s:
                 continue
-
-            # 找到 K2 候选：K2 < K1，不限制 K2 必须 <= S
-            # 这样可以推荐如 2500-1500 的价差（当前价 3200，目标 1500）
             k2_candidates = [(i, k, m) for i, (k, m) in enumerate(zip(strikes, mids))
                            if k < k1 and i >= anchor_idx - max_gap_steps]
 
             for k2_idx, k2, m2 in k2_candidates:
-                # 检查质量
-                q1 = grp.iloc[k1_idx]["quality_flag"]
-                q2 = grp.iloc[k2_idx]["quality_flag"]
+                q1, q2 = grp.iloc[k1_idx]["quality_flag"], grp.iloc[k2_idx]["quality_flag"]
                 if q1 in ("missing", "invalid") or q2 in ("missing", "invalid"):
                     continue
 
-                # Put 借方价差：买 K1（高），卖 K2（低）
-                metrics = _calc_vertical_metrics("PUT", "DEBIT", k1, k2, long_px=m1, short_px=m2,
-                                                s=s, iv=iv, t_years=t_years)
-
-                # 过滤权利金过小的组合
+                metrics = _calc_vertical_metrics("PUT", "DEBIT", k1, k2, long_px=m1, short_px=m2, s=s, iv=iv, t_years=t_years)
                 premium_usd = abs(metrics["premium"]) * s
-                if premium_usd < 10:
-                    continue
-
-                # 跳过异常赔率
-                if math.isnan(metrics["odds"]) or metrics["odds"] == float("inf"):
+                if premium_usd < 10 or math.isnan(metrics["odds"]) or metrics["odds"] == float("inf"):
                     continue
 
                 candidates.append({
                     "expiry_ts": int(exp_ts),
                     "expiry_date": pd.Timestamp(exp_ts, unit='ms').strftime('%Y-%m-%d'),
-                    "K1": float(k1),
-                    "K2": float(k2),
+                    "K1": float(k1), "K2": float(k2),
                     "premium": metrics["premium"],
                     "max_profit": metrics["max_profit"],
                     "max_loss": metrics["max_loss"],
                     "odds": metrics["odds"],
                 })
 
-    # 按赔率降序排序，取 Top N
-    candidates.sort(key=lambda x: (-x["odds"], -x["max_profit"], x["premium"]))
+        elif view == "not_up":
+            # 不会上涨到 ≥ P：Call 贷方价差，固定 K1=P，枚举 K2>K1
+            k1, k1_idx, m1 = anchor_strike, anchor_idx, anchor_mid
+
+            # 过滤实值期权：Call 的 K1 和 K2 都应该 >= 现货价（虚值或平值）
+            if k1 < s:
+                continue
+
+            k2_candidates = [(i, k, m) for i, (k, m) in enumerate(zip(strikes, mids))
+                           if k > k1 and i <= anchor_idx + max_gap_steps]
+
+            for k2_idx, k2, m2 in k2_candidates:
+                # K2 也必须是虚值或平值
+                if k2 < s:
+                    continue
+
+                q1, q2 = grp.iloc[k1_idx]["quality_flag"], grp.iloc[k2_idx]["quality_flag"]
+                if q1 in ("missing", "invalid") or q2 in ("missing", "invalid"):
+                    continue
+
+                # Call 贷方价差：卖出 K1（低），买入 K2（高）作为保护
+                metrics = _calc_vertical_metrics("CALL", "CREDIT", k1, k2, long_px=m2, short_px=m1, s=s, iv=iv, t_years=t_years)
+                premium_usd = abs(metrics["premium"]) * s
+                if premium_usd < 10 or math.isnan(metrics["odds"]) or metrics["odds"] == float("inf"):
+                    continue
+
+                candidates.append({
+                    "expiry_ts": int(exp_ts),
+                    "expiry_date": pd.Timestamp(exp_ts, unit='ms').strftime('%Y-%m-%d'),
+                    "K1": float(k1), "K2": float(k2),
+                    "premium": metrics["premium"],
+                    "max_profit": metrics["max_profit"],
+                    "max_loss": metrics["max_loss"],
+                    "odds": metrics["odds"],
+                })
+
+        else:  # not_down
+            # 不会下跌到 ≤ P：Put 贷方价差，固定 K1=P，枚举 K2<K1
+            k1, k1_idx, m1 = anchor_strike, anchor_idx, anchor_mid
+
+            # 过滤实值期权：Put 的 K1 和 K2 都应该 <= 现货价（虚值或平值）
+            if k1 > s:
+                continue
+
+            k2_candidates = [(i, k, m) for i, (k, m) in enumerate(zip(strikes, mids))
+                           if k < k1 and i >= anchor_idx - max_gap_steps]
+
+            for k2_idx, k2, m2 in k2_candidates:
+                # K2 也必须是虚值或平值
+                if k2 > s:
+                    continue
+
+                q1, q2 = grp.iloc[k1_idx]["quality_flag"], grp.iloc[k2_idx]["quality_flag"]
+                if q1 in ("missing", "invalid") or q2 in ("missing", "invalid"):
+                    continue
+
+                # Put 贷方价差：卖出 K1（高），买入 K2（低）作为保护
+                metrics = _calc_vertical_metrics("PUT", "CREDIT", k1, k2, long_px=m2, short_px=m1, s=s, iv=iv, t_years=t_years)
+                premium_usd = abs(metrics["premium"]) * s
+                if premium_usd < 10 or math.isnan(metrics["odds"]) or metrics["odds"] == float("inf"):
+                    continue
+
+                candidates.append({
+                    "expiry_ts": int(exp_ts),
+                    "expiry_date": pd.Timestamp(exp_ts, unit='ms').strftime('%Y-%m-%d'),
+                    "K1": float(k1), "K2": float(k2),
+                    "premium": metrics["premium"],
+                    "max_profit": metrics["max_profit"],
+                    "max_loss": metrics["max_loss"],
+                    "odds": metrics["odds"],
+                })
+
+    # 贷方策略按赔率升序（低赔率=高胜率），借方策略按赔率降序（高赔率）
+    if side == "CREDIT":
+        candidates.sort(key=lambda x: (x["odds"], x["premium"]))
+    else:
+        candidates.sort(key=lambda x: (-x["odds"], -x["max_profit"], x["premium"]))
+
     top_strategies = candidates[:return_count]
 
     base = chain_df["base"].iloc[0] if not chain_df.empty else ""
@@ -512,9 +568,10 @@ def scan_opinion_spreads(
         "base": base,
         "spot_price": spot_price,
         "horizon": horizon,
-        "direction": direction,
-        "anchor_leg": "K2" if direction == "up" else "K1",
-        "anchor_strike": target_price,
+        "view": view,
+        "side": side,
+        "anchor_leg": anchor_leg,
+        "anchor_strike": unified_anchor_strike,
         "items": top_strategies,
         "notes": {
             "strike_snapped": strike_snapped,
