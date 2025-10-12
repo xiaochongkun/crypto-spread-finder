@@ -69,6 +69,7 @@ class ChainMeta:
     asof_ts: int
     bases: List[str]
     spot_price: float | None = None  # 新增：标准现货指数价格
+    dvol_index: float | None = None  # 新增：DVOL波动率指数
 
 
 def load_chain_for(date: str, base: str) -> Tuple[pd.DataFrame, ChainMeta]:
@@ -88,11 +89,15 @@ def load_chain_for(date: str, base: str) -> Tuple[pd.DataFrame, ChainMeta]:
     spot_prices = manifest_d.get("spot_prices", {})
     spot_price = spot_prices.get(base) if spot_prices else None
 
+    dvol_indices = manifest_d.get("dvol_indices", {})
+    dvol_index = dvol_indices.get(base) if dvol_indices else None
+
     meta = ChainMeta(
         date=date,
         asof_ts=int(manifest_d.get("asof_ts", 0)),
         bases=manifest_d.get("bases", []),
         spot_price=spot_price,
+        dvol_index=dvol_index,
     )
     return df, meta
 

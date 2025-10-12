@@ -85,7 +85,7 @@ export default function ResultBucket({ bucket, spotPrice }: ResultBucketProps) {
                 权利金{' '}
                 <span
                   style={{ cursor: 'help', color: '#666' }}
-                  title="数据过滤规则：&#10;1. 过滤单腿期权 spread_ratio > 0.5（买卖价差超过中间价50%）&#10;2. 过滤组合权利金 < $10（避免深度虚值期权）"
+                  title="价格计算规则：&#10;1. 优先使用买卖价中间价 (bid+ask)/2&#10;2. 若无买卖价，使用 Deribit mark_price&#10;3. 若仍无数据，使用单边报价 bid 或 ask&#10;&#10;数据过滤规则：&#10;1. 过滤单腿期权 spread_ratio > 0.5（买卖价差超过中间价50%）&#10;2. 过滤组合权利金 < $10（避免深度虚值期权）"
                 >
                   🛈
                 </span>

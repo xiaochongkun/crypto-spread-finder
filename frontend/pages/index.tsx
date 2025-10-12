@@ -6,11 +6,13 @@ type ScanLeg = {
   K1: number; K2: number; premium: number; max_profit: number; max_loss: number; odds: number; pop?: number | null; quality?: string | null;
 }
 type Bucket = { leg_type: 'CALL'|'PUT'; side: 'DEBIT'|'CREDIT'; top: ScanLeg[]; bottom: ScanLeg[] };
-type ScanResp = { asof_date: string; asof_ts: number; base: string; spot_price: number | null; tenor: string; buckets: Bucket[] };
+type ScanResp = { asof_date: string; asof_ts: number; base: string; spot_price: number | null; dvol_index?: number | null; tenor: string; buckets: Bucket[] };
 
 import ResultBucket from '../components/ResultBucket';
+import CSPScanner from '../components/CSPScanner';
+import CCScanner from '../components/CCScanner';
 
-const API_BASE = '/spread-finder/api';
+const API_BASE = '/option-strategy-finder/api';
 
 // 格式化数字，添加千位分隔符
 function formatNumber(num: number, decimals: number = 2): string {
@@ -85,7 +87,12 @@ function OpinionResultDisplay({ result, spotPrice }: { result: any; spotPrice: n
                 权利金{' '}
                 <span
                   style={{ cursor: 'help', color: '#666' }}
-                  title={`数据过滤规则：
+                  title={`价格计算规则：
+1. 优先使用买卖价中间价 (bid+ask)/2
+2. 若无买卖价，使用 Deribit mark_price
+3. 若仍无数据，使用单边报价 bid 或 ask
+
+数据过滤规则：
 1. 过滤单腿期权 spread_ratio > 0.5（买卖价差超过中间价50%）
 2. 过滤组合权利金 < $10（避免深度虚值期权）`}
                 >
@@ -177,7 +184,7 @@ function findWeeklyExpiry(expiries: number[]): number {
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'expiry'|'opinion'>('opinion');
+  const [activeTab, setActiveTab] = useState<'opinion'|'expiry'|'csp'|'cc'>('opinion');
   const [dates, setDates] = useState<string[]>([]);
   const [base, setBase] = useState<'BTC'|'ETH'>('BTC');
   const [date, setDate] = useState<string>('');
@@ -186,6 +193,13 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ScanResp | null>(null);
   const [error, setError] = useState<string>('');
+
+  // 全局数据信息状态
+  const [globalData, setGlobalData] = useState<{
+    asof_ts?: number;
+    spot_price?: number;
+    dvol_index?: number;
+  }>({});
 
   // Opinion Tab 状态
   const [opinionHorizon, setOpinionHorizon] = useState<'short'|'mid'|'long'>('mid');
@@ -199,13 +213,55 @@ export default function Home() {
     setOpinionTarget(base === 'BTC' ? '150' : '45');
   }, [base]);
 
-  // 加载日期列表
+  // 页面加载时获取初始数据信息
   useEffect(() => {
-    fetch(`${API_BASE}/meta/dates`).then(r => r.json()).then((d: DatesResp) => {
-      const ds = d.dates || [];
-      setDates(ds);
-      if (ds.length) setDate(ds[ds.length - 1]);
-    }).catch(e => setError(String(e)));
+    const fetchInitialData = async () => {
+      try {
+        // 获取最新日期
+        const datesResp = await fetch(`${API_BASE}/meta/dates`);
+        const datesData: DatesResp = await datesResp.json();
+        const ds = datesData.dates || [];
+        setDates(ds);
+        if (ds.length === 0) return;
+
+        const latestDate = ds[ds.length - 1];
+        setDate(latestDate);
+
+        // 获取初始数据（通过 expiries 接口可以拿到 spot_price 等信息）
+        const expResp = await fetch(`${API_BASE}/expiries?base=${base}&date=${latestDate}`);
+        const expData: ExpiriesResp = await expResp.json();
+
+        // 尝试从返回数据中提取信息
+        if (expData) {
+          // 由于 expiries 接口可能不返回这些数据，我们需要发起一个扫描来获取
+          // 先尝试简单的 scan 来获取数据信息
+          const scanResp = await fetch(`${API_BASE}/spread/scan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              base,
+              date: latestDate,
+              direction: 'up',
+              tenor: 'mid',
+              return_per_bucket: 1
+            })
+          });
+
+          if (scanResp.ok) {
+            const scanData: ScanResp = await scanResp.json();
+            setGlobalData({
+              asof_ts: scanData.asof_ts,
+              spot_price: scanData.spot_price || undefined,
+              dvol_index: scanData.dvol_index || undefined,
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch initial data:', e);
+      }
+    };
+
+    fetchInitialData();
   }, []);
 
   // 加载到期日列表
@@ -295,6 +351,13 @@ export default function Home() {
       };
 
       setResult(mergedData);
+
+      // 更新全局数据信息
+      setGlobalData({
+        asof_ts: mergedData.asof_ts,
+        spot_price: mergedData.spot_price || undefined,
+        dvol_index: mergedData.dvol_index || undefined,
+      });
     } catch (e: any) {
       setError(String(e?.message || e));
     } finally { setLoading(false); }
@@ -336,6 +399,13 @@ export default function Home() {
       if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
       const data = await resp.json();
       setOpinionResult(data);
+
+      // 更新全局数据信息
+      setGlobalData({
+        asof_ts: data.asof_ts,
+        spot_price: data.spot_price || undefined,
+        dvol_index: data.dvol_index || undefined,
+      });
     } catch (e: any) {
       setError(String(e?.message || e));
     } finally { setLoading(false); }
@@ -344,12 +414,37 @@ export default function Home() {
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
-        <img src="/spread-finder/signalplus-logo.png" alt="SignalPlus" style={{ height: 40 }} />
+        <img src="/option-strategy-finder/signalplus-logo.png" alt="SignalPlus" style={{ height: 40 }} />
         <h1 style={{ margin: 0 }}>期权价差策略推荐</h1>
       </div>
 
+      {/* 全局数据信息 */}
+      {globalData.asof_ts && (
+        <div style={{ margin: '0 0 20px 0', padding: '12px 16px', background: '#f0f8ff', borderRadius: 8, border: '1px solid #b3d9ff', fontSize: 14 }}>
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+            <div>
+              <strong style={{ color: '#0066cc' }}>数据时间:</strong>{' '}
+              <span>{new Date(globalData.asof_ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}</span>
+            </div>
+            {globalData.spot_price && (
+              <div>
+                <strong style={{ color: '#0066cc' }}>现货价格 ({base}):</strong>{' '}
+                <span style={{ fontWeight: 'bold' }}>${formatNumber(globalData.spot_price, 2)}</span>
+              </div>
+            )}
+            {globalData.dvol_index && (
+              <div>
+                <strong style={{ color: '#0066cc' }}>DVOL指数:</strong>{' '}
+                <span>{globalData.dvol_index.toFixed(2)}%</span>
+                <span style={{ marginLeft: 8, fontSize: 12, color: '#666' }}>(30天隐含波动率)</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Tab 切换 */}
-      <div style={{ display: 'flex', gap: 2, marginBottom: 20, borderBottom: '2px solid #ddd' }}>
+      <div style={{ display: 'flex', gap: 2, marginBottom: 20, borderBottom: '2px solid #ddd', overflowX: 'auto' }}>
         <button
           onClick={() => setActiveTab('opinion')}
           style={{
@@ -360,7 +455,8 @@ export default function Home() {
             cursor: 'pointer',
             fontSize: 15,
             fontWeight: 'bold',
-            borderRadius: '6px 6px 0 0'
+            borderRadius: '6px 6px 0 0',
+            whiteSpace: 'nowrap'
           }}
         >
           有观点看法
@@ -375,29 +471,53 @@ export default function Home() {
             cursor: 'pointer',
             fontSize: 15,
             fontWeight: 'bold',
-            borderRadius: '6px 6px 0 0'
+            borderRadius: '6px 6px 0 0',
+            whiteSpace: 'nowrap'
           }}
         >
           按到期筛选
         </button>
+        <button
+          onClick={() => setActiveTab('csp')}
+          style={{
+            padding: '10px 24px',
+            border: 'none',
+            background: activeTab === 'csp' ? '#007bff' : '#f5f5f5',
+            color: activeTab === 'csp' ? '#fff' : '#333',
+            cursor: 'pointer',
+            fontSize: 15,
+            fontWeight: 'bold',
+            borderRadius: '6px 6px 0 0',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          CSP 打折买币
+        </button>
+        <button
+          onClick={() => setActiveTab('cc')}
+          style={{
+            padding: '10px 24px',
+            border: 'none',
+            background: activeTab === 'cc' ? '#007bff' : '#f5f5f5',
+            color: activeTab === 'cc' ? '#fff' : '#333',
+            cursor: 'pointer',
+            fontSize: 15,
+            fontWeight: 'bold',
+            borderRadius: '6px 6px 0 0',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          CC 加钱卖货
+        </button>
       </div>
 
       {/* Tab 内容 */}
-      {activeTab === 'opinion' ? (
+      {activeTab === 'csp' ? (
+        <CSPScanner onDataUpdate={setGlobalData} />
+      ) : activeTab === 'cc' ? (
+        <CCScanner onDataUpdate={setGlobalData} />
+      ) : activeTab === 'opinion' ? (
         <>
-          {/* Opinion Tab 内容 */}
-          {opinionResult?.asof_ts && (
-            <div style={{ margin: '0 0 16px 0', padding: '12px', background: '#f5f5f5', borderRadius: 6, fontSize: 14 }}>
-              <div><strong>数据时间 (北京时间):</strong> {new Date(opinionResult.asof_ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}</div>
-              {opinionResult.spot_price && (
-                <div>
-                  <strong>现货价格:</strong> ${opinionResult.spot_price.toFixed(2)}
-                  <span style={{ marginLeft: 8, fontSize: 12, color: '#666' }}>(每10分钟更新)</span>
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Opinion 控制面板 */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 12 }}>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -466,19 +586,6 @@ export default function Home() {
         </>
       ) : (
         <>
-          {/* 数据信息 */}
-          {result?.asof_ts && (
-            <div style={{ margin: '0 0 16px 0', padding: '12px', background: '#f5f5f5', borderRadius: 6, fontSize: 14 }}>
-              <div><strong>数据时间 (北京时间):</strong> {new Date(result.asof_ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}</div>
-              {result.spot_price && (
-                <div>
-                  <strong>现货价格:</strong> ${result.spot_price.toFixed(2)}
-                  <span style={{ marginLeft: 8, fontSize: 12, color: '#666' }}>(每10分钟更新)</span>
-                </div>
-              )}
-            </div>
-          )}
-
           {/* 控制面板 */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 20 }}>
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

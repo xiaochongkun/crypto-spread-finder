@@ -93,6 +93,35 @@ async def run_once(date_str: str, bases: List[str]) -> None:
         index_prices = await asyncio.gather(*index_tasks)
         spot_prices = dict(zip(bases, index_prices))
 
+    # 计算DVOL（30天左右ATM期权的平均IV）
+    # 需要使用 ins_by_base 来获取 strike 和 expiration_timestamp
+    dvol_indices = {}
+    for base, rows, ins_map, spot in zip(bases, book_by_base, ins_by_base, index_prices):
+        if not rows:
+            continue
+        # 筛选15-60天到期的ATM期权（放宽范围以适应Deribit的到期日分布）
+        atm_ivs = []
+        for opt in rows:
+            instrument_name = opt.get("instrument_name")
+            meta = ins_map.get(instrument_name) if instrument_name else None
+            if not meta:
+                continue
+
+            exp_ts = int(meta.get("expiration_timestamp", 0))
+            strike = float(meta.get("strike", 0))
+            mark_iv = opt.get("mark_iv")
+
+            days_to_exp = (exp_ts - asof_ts) / (24 * 3600 * 1000)
+            # 15-60天到期，且strike在现货价格±15%以内（ATM附近）
+            if 15 <= days_to_exp <= 60 and strike and abs(strike - spot) / spot < 0.15:
+                if mark_iv and mark_iv > 0:
+                    atm_ivs.append(mark_iv)
+
+        if atm_ivs:
+            dvol_indices[base] = round(sum(atm_ivs) / len(atm_ivs), 2)
+        else:
+            dvol_indices[base] = None
+
     manifest = {
         "date": date_str,
         "timestamp": timestamp_str,
@@ -100,7 +129,8 @@ async def run_once(date_str: str, bases: List[str]) -> None:
         "bases": bases,
         "rows": 0,
         "expiries": {},
-        "spot_prices": spot_prices
+        "spot_prices": spot_prices,
+        "dvol_indices": dvol_indices
     }
 
     total_rows = 0
