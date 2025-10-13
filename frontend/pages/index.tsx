@@ -86,7 +86,19 @@ function OpinionResultDisplay({ result, spotPrice }: { result: any; spotPrice: n
               <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>
                 权利金{' '}
                 <span
-                  style={{ cursor: 'help', color: '#666' }}
+                  style={{
+                    cursor: 'help',
+                    color: '#007bff',
+                    fontWeight: 'bold',
+                    fontSize: '14px',
+                    display: 'inline-block',
+                    width: '16px',
+                    height: '16px',
+                    lineHeight: '16px',
+                    textAlign: 'center',
+                    border: '1px solid #007bff',
+                    borderRadius: '50%'
+                  }}
                   title={`价格计算规则：
 1. 优先使用买卖价中间价 (bid+ask)/2
 2. 若无买卖价，使用 Deribit mark_price
@@ -96,7 +108,7 @@ function OpinionResultDisplay({ result, spotPrice }: { result: any; spotPrice: n
 1. 过滤单腿期权 spread_ratio > 0.5（买卖价差超过中间价50%）
 2. 过滤组合权利金 < $10（避免深度虚值期权）`}
                 >
-                  🛈
+                  i
                 </span>
               </th>
               <th style={{ padding: '8px', textAlign: 'left', borderBottom: '2px solid #dee2e6' }}>最大利润</th>
