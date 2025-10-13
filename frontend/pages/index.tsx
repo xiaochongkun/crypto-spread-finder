@@ -415,7 +415,7 @@ export default function Home() {
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
         <img src="/option-strategy-finder/signalplus-logo.png" alt="SignalPlus" style={{ height: 40 }} />
-        <h1 style={{ margin: 0 }}>期权价差策略推荐</h1>
+        <h1 style={{ margin: 0 }}>期权策略推荐</h1>
       </div>
 
       {/* 全局数据信息 */}
