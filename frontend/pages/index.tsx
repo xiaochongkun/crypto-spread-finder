@@ -637,7 +637,8 @@ export default function Home() {
 
       {/* 免责声明 */}
       <div style={{ marginTop: 32, paddingTop: 16, borderTop: '1px solid #ddd', textAlign: 'center', fontSize: 12, color: '#999' }}>
-        仅教育用途，非投资建议，数据来源于 Deribit
+        <div>仅教育用途，非投资建议，数据来源于 Deribit</div>
+        <div style={{ marginTop: 8 }}>如有任何问题，欢迎联系vx：signalpluskunkka</div>
       </div>
     </div>
   );
