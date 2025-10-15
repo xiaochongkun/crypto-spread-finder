@@ -490,22 +490,6 @@ export default function Home() {
           按到期筛选
         </button>
         <button
-          onClick={() => setActiveTab('csp')}
-          style={{
-            padding: '10px 24px',
-            border: 'none',
-            background: activeTab === 'csp' ? '#007bff' : '#f5f5f5',
-            color: activeTab === 'csp' ? '#fff' : '#333',
-            cursor: 'pointer',
-            fontSize: 15,
-            fontWeight: 'bold',
-            borderRadius: '6px 6px 0 0',
-            whiteSpace: 'nowrap'
-          }}
-        >
-          CSP 打折买币
-        </button>
-        <button
           onClick={() => setActiveTab('cc')}
           style={{
             padding: '10px 24px',
@@ -520,6 +504,22 @@ export default function Home() {
           }}
         >
           CC 加钱卖货
+        </button>
+        <button
+          onClick={() => setActiveTab('csp')}
+          style={{
+            padding: '10px 24px',
+            border: 'none',
+            background: activeTab === 'csp' ? '#007bff' : '#f5f5f5',
+            color: activeTab === 'csp' ? '#fff' : '#333',
+            cursor: 'pointer',
+            fontSize: 15,
+            fontWeight: 'bold',
+            borderRadius: '6px 6px 0 0',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          CSP 打折买币
         </button>
       </div>
 
